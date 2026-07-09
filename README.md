@@ -39,10 +39,11 @@ cp config.example.yaml config.yaml
 # edit config.yaml: margins, org info, matching aliases, date range, etc.
 
 cp data/tassonomia.example.csv data/tassonomia.csv
-# edit data/tassonomia.csv with your real product taxonomy — required
-# columns: macro_categoria (frutta | ortaggi e verdure | prodotti secchi),
-# raggruppamento, prodotto, qualita, certificazione (JSON array string,
-# e.g. ["bio"]), alias (JSON array string, e.g. ["arance"])
+# replace it with your real product taxonomy export. Required columns
+# (matched loosely by name, so exports like Airtable's with verbose
+# headers work as-is): macro category (frutta | verdura | prodotti secchi,
+# case-insensitive), raggruppamento, prodotto, qualita, certificazione
+# (JSON array string, e.g. ["bio"]), alias (JSON array string, e.g. ["arance"])
 ```
 
 ## Usage

@@ -4,14 +4,17 @@ computes the sellable price list.
 
 Input:
 - The Excel produced by wecosoft.scraper (must have a PREV_matrix sheet)
-- A taxonomy CSV with columns: macro_categoria, raggruppamento, prodotto,
-  qualita, certificazione, alias
+- A taxonomy CSV with columns for macro category (Frutta / Verdura /
+  Prodotti secchi), raggruppamento, prodotto, qualita, certificazione and
+  alias. Column headers are matched loosely (case/accent-insensitive,
+  ignoring any "[type]" or instructional text after the first line or
+  bracket) so exports from tools like Airtable work as-is.
 
 Output sheets:
 - Tassonomia_Eco_pricing
 - LISTINO COMPLETO
 - listino da usare   (referenza, prezzo, prezzo -X%, prezzo +Y%)
-- frutta / ortaggi e verdure / prodotti secchi
+- frutta / verdura / prodotti secchi
 - Analisi andamento prezzi
 - Audit_tassonomia / Audit_summary
 """
@@ -32,7 +35,7 @@ from wecosoft.config import PricingConfig
 
 MACRO_ORDER = {
     "frutta": 1,
-    "ortaggi e verdure": 2,
+    "verdura": 2,
     "prodotti secchi": 3,
 }
 
@@ -46,6 +49,18 @@ REQUIRED_TAX_COLS = [
     "certificazione",
     "alias",
 ]
+
+# Maps the loose/verbose headers used by taxonomy export tools (e.g.
+# Airtable's "Macro-categoria * [select]\nFrutta / Verdura / ...") onto the
+# canonical column names this module works with.
+HEADER_ALIASES = {
+    "macro_categoria": ["macro-categoria", "macro categoria"],
+    "raggruppamento": ["raggruppamento"],
+    "prodotto": ["prodotto"],
+    "qualita": ["qualita"],
+    "certificazione": ["certificazioni", "certificazione"],
+    "alias": ["alias"],
+}
 
 QUALITY_NOISE = {
     "",
@@ -67,6 +82,7 @@ OLD_GENERATED_SHEETS_TO_REPLACE = {
     "listino da usare",
     "frutta",
     "frutta esotica",
+    "verdura",
     "ortaggi e verdure",
     "prodotti secchi",
     "Analisi andamento prezzi",
@@ -228,23 +244,54 @@ def segment_matches(segment_norm, variants):
     return False
 
 
+def _normalize_header_cell(col) -> str:
+    key = str(col).split("\n")[0].split("[")[0]
+    key = key.replace("*", "")
+    key = strip_accents(key).strip().lower()
+    return key
+
+
+def map_taxonomy_headers(columns) -> dict:
+    """
+    Matches loosely-formatted source headers (extra instructional text,
+    accents, "[type]" suffixes) onto the canonical column names.
+    """
+    colmap = {}
+
+    for col in columns:
+        key = _normalize_header_cell(col)
+
+        for target, aliases in HEADER_ALIASES.items():
+            if target in colmap.values():
+                continue
+            if any(key.startswith(strip_accents(a)) for a in aliases):
+                colmap[col] = target
+                break
+
+    return colmap
+
+
 def load_taxonomy(taxonomy_csv: str) -> pd.DataFrame:
     taxonomy = pd.read_csv(taxonomy_csv, encoding="utf-8")
+    taxonomy = taxonomy.rename(columns=map_taxonomy_headers(taxonomy.columns))
 
     missing_tax_cols = [c for c in REQUIRED_TAX_COLS if c not in taxonomy.columns]
     if missing_tax_cols:
         raise ValueError(f"Colonne mancanti nella tassonomia CSV: {missing_tax_cols}")
 
-    allowed_macro = set(MACRO_ORDER.keys())
-    invalid_macro = sorted(set(taxonomy["macro_categoria"].dropna().astype(str).str.strip()) - allowed_macro)
-
-    if invalid_macro:
-        raise ValueError("La tassonomia contiene macro-categorie non ammesse: " + ", ".join(invalid_macro))
-
     taxonomy = taxonomy.copy()
 
     for c in REQUIRED_TAX_COLS:
-        taxonomy[c] = taxonomy[c].fillna("").astype(str)
+        taxonomy[c] = taxonomy[c].fillna("").astype(str).str.strip()
+
+    taxonomy = taxonomy[taxonomy["prodotto"] != ""].reset_index(drop=True)
+    taxonomy["macro_categoria"] = taxonomy["macro_categoria"].str.lower()
+
+    allowed_macro = set(MACRO_ORDER.keys())
+    invalid_macro = sorted(set(taxonomy["macro_categoria"].dropna()) - allowed_macro)
+
+    if invalid_macro:
+        raise ValueError("La tassonomia contiene macro-categorie non ammesse: " + ", ".join(invalid_macro))
 
     taxonomy["certificazione"] = taxonomy["certificazione"].apply(json_array_clean)
     taxonomy["alias"] = taxonomy["alias"].apply(json_array_clean)
