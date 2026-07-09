@@ -33,6 +33,10 @@ from urllib3.util.retry import Retry
 
 from wecosoft.config import ScraperConfig
 
+class ScraperCancelled(Exception):
+    """Raised when a cancel_event is set while a scrape is in progress."""
+
+
 PRICE_TOKEN_RE = re.compile(r"^[+-]?\d+[.,]\d{2}$")
 
 CATEGORY_OR_NOISE = {
@@ -357,19 +361,32 @@ def url_exists(session: requests.Session, url: str):
     return None
 
 
-def find_existing_pdfs(session: requests.Session, cfg: ScraperConfig) -> list[str]:
+def find_existing_pdfs(
+    session: requests.Session,
+    cfg: ScraperConfig,
+    cancel_event=None,
+    progress_cb=None,
+) -> list[str]:
     candidates = candidate_pdf_urls(session, cfg)
+    total = len(candidates)
     found = set()
 
-    print(f"Candidate URLs to check: {len(candidates)}")
+    print(f"Candidate URLs to check: {total}")
 
     with ThreadPoolExecutor(max_workers=cfg.max_workers_check) as ex:
         futures = [ex.submit(url_exists, session, u) for u in candidates]
 
-        for f in tqdm(as_completed(futures), total=len(futures), desc="Checking PDF URLs"):
+        for i, f in enumerate(tqdm(as_completed(futures), total=total, desc="Checking PDF URLs"), start=1):
+            if cancel_event is not None and cancel_event.is_set():
+                ex.shutdown(cancel_futures=True)
+                raise ScraperCancelled("Scraping annullato durante il controllo degli URL.")
+
             res = f.result()
             if res:
                 found.add(res)
+
+            if progress_cb is not None:
+                progress_cb("check", i, total)
 
     return sorted(found)
 
@@ -400,16 +417,30 @@ def download_pdf(session: requests.Session, url: str, pdf_dir: str):
     return None, url
 
 
-def download_all(session: requests.Session, urls: list[str], cfg: ScraperConfig):
+def download_all(
+    session: requests.Session,
+    urls: list[str],
+    cfg: ScraperConfig,
+    cancel_event=None,
+    progress_cb=None,
+):
     out = []
+    total = len(urls)
 
     with ThreadPoolExecutor(max_workers=cfg.max_workers_download) as ex:
         futures = [ex.submit(download_pdf, session, u, cfg.pdf_dir) for u in urls]
 
-        for f in tqdm(as_completed(futures), total=len(futures), desc="Downloading PDFs"):
+        for i, f in enumerate(tqdm(as_completed(futures), total=total, desc="Downloading PDFs"), start=1):
+            if cancel_event is not None and cancel_event.is_set():
+                ex.shutdown(cancel_futures=True)
+                raise ScraperCancelled("Scraping annullato durante il download dei PDF.")
+
             local, url = f.result()
             if local:
                 out.append((local, url))
+
+            if progress_cb is not None:
+                progress_cb("download", i, total)
 
     return out
 
@@ -544,11 +575,15 @@ def deduplicate_raw(raw: pd.DataFrame) -> pd.DataFrame:
     return raw.drop(columns=["has_prev"])
 
 
-def build_dataset(downloaded):
+def build_dataset(downloaded, cancel_event=None, progress_cb=None):
     all_rows = []
     parse_errors = []
+    total = len(downloaded)
 
-    for path, url in tqdm(downloaded, desc="Parsing PDFs"):
+    for i, (path, url) in enumerate(tqdm(downloaded, desc="Parsing PDFs"), start=1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise ScraperCancelled("Scraping annullato durante l'analisi dei PDF.")
+
         try:
             rows = parse_pdf(path, url)
 
@@ -559,6 +594,9 @@ def build_dataset(downloaded):
 
         except Exception as e:
             parse_errors.append({"url": url, "file": path, "errore": str(e)})
+
+        if progress_cb is not None:
+            progress_cb("parse", i, total)
 
     raw = pd.DataFrame(all_rows)
 
@@ -746,19 +784,26 @@ def write_excel(output, matrix, raw, fonti, audit_pdf, avvisi, validazioni):
                     ws.column_dimensions[letter].width = 35
 
 
-def run(cfg: ScraperConfig) -> dict:
+def run(cfg: ScraperConfig, cancel_event=None, progress_cb=None) -> dict:
+    """
+    cancel_event: an optional threading.Event; if set while a scrape is in
+    progress, raises ScraperCancelled at the next checkpoint instead of
+    continuing.
+    progress_cb: an optional callable(phase: str, current: int, total: int)
+    invoked as work proceeds, with phase one of "check"/"download"/"parse".
+    """
     os.makedirs(cfg.pdf_dir, exist_ok=True)
 
     session = _build_session()
 
     print("Collecting all available CAAT PDFs...")
-    urls = find_existing_pdfs(session, cfg)
+    urls = find_existing_pdfs(session, cfg, cancel_event=cancel_event, progress_cb=progress_cb)
     print(f"Candidate PDFs found: {len(urls)}")
 
-    downloaded = download_all(session, urls, cfg)
+    downloaded = download_all(session, urls, cfg, cancel_event=cancel_event, progress_cb=progress_cb)
     print(f"Downloaded and valid PDFs: {len(downloaded)}")
 
-    raw, matrix, fonti, audit_pdf, avvisi = build_dataset(downloaded)
+    raw, matrix, fonti, audit_pdf, avvisi = build_dataset(downloaded, cancel_event=cancel_event, progress_cb=progress_cb)
 
     validazioni = run_known_validations(raw, cfg.known_validations)
 

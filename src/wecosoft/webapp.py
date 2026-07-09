@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import threading
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -18,6 +19,12 @@ import streamlit as st
 
 from wecosoft import latest_report, pricing, scraper, tweak_report
 from wecosoft.config import Config, load_config
+
+PHASE_LABELS = {
+    "check": "Controllo URL disponibili",
+    "download": "Download PDF",
+    "parse": "Analisi PDF",
+}
 
 UPLOADS_DIR = Path("output/uploads")
 REPORTS_DIR = Path("output/reports")
@@ -66,6 +73,82 @@ def _save_taxonomy_upload(uploaded_file) -> str:
         dest.write_bytes(raw)
 
     return str(dest)
+
+
+class ScraperJob:
+    """
+    Shared state between the background scraping thread and the UI.
+    Only plain attributes are mutated from the background thread — no
+    Streamlit calls happen there, so this is safe without extra locking
+    for our purposes (each field is set independently and the UI only
+    ever reads a possibly-one-tick-stale value).
+    """
+
+    def __init__(self):
+        self.cancel_event = threading.Event()
+        self.status = "running"  # running | done | cancelled | error
+        self.phase = None
+        self.current = 0
+        self.total = 0
+        self.result = None
+        self.error = None
+
+
+def _run_scraper_job(run_cfg, job: ScraperJob):
+    def progress_cb(phase, current, total):
+        job.phase = phase
+        job.current = current
+        job.total = total
+
+    try:
+        scraper.run(run_cfg, cancel_event=job.cancel_event, progress_cb=progress_cb)
+
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        job.result = latest_report.build_latest_report(
+            run_cfg.output_xlsx, str(REPORTS_DIR / "ultimo_listino.pdf")
+        )
+        job.status = "done"
+    except scraper.ScraperCancelled:
+        job.status = "cancelled"
+    except Exception as e:
+        job.error = str(e)
+        job.status = "error"
+
+
+@st.fragment(run_every=1)
+def _scraper_progress_fragment():
+    job = st.session_state.get("scraper_job")
+
+    if job is None:
+        return
+
+    if job.status == "running":
+        label = PHASE_LABELS.get(job.phase, "Avvio")
+
+        if job.total:
+            st.progress(min(job.current / job.total, 1.0), text=f"{label}: {job.current}/{job.total}")
+        else:
+            st.write(f"{label}...")
+
+        if st.button("⏹ Stop", key="stop_scraper"):
+            job.cancel_event.set()
+            st.info("Interruzione richiesta, attendere...")
+
+        return
+
+    # Terminal state: hand results off to session_state and do a full
+    # app rerun so the range picker/button and any success message
+    # outside this fragment reappear.
+    if job.status == "done":
+        st.session_state["scraper_report_pdf"] = job.result["output_pdf"]
+        st.session_state["scraper_report_meta"] = job.result
+    elif job.status == "cancelled":
+        st.session_state["scraper_last_message"] = ("warning", "Scraping interrotto.")
+    elif job.status == "error":
+        st.session_state["scraper_last_message"] = ("error", f"Errore durante lo scraping: {job.error}")
+
+    st.session_state["scraper_job"] = None
+    st.rerun()
 
 
 def _parse_discounts(text: str) -> list[float]:
@@ -144,49 +227,52 @@ def main():
     st.subheader("1. Scraper")
     st.write("Raccoglie gli ultimi listini CAAT e genera un report PDF con i prezzi più recenti.")
 
-    range_col, button_col = st.columns([2, 1])
+    st.session_state.setdefault("scraper_job", None)
 
-    with range_col:
-        range_label = st.selectbox(
-            "Periodo da scansionare",
-            list(SCAN_RANGE_OPTIONS.keys()),
-            index=0,
-            help=(
-                "Quanto indietro cercare i listini CAAT. Un periodo più corto vuol dire "
-                "molte meno pagine da controllare, quindi molto più veloce. I report "
-                "guardano al massimo 28 giorni lavorativi indietro, quindi 'Ultimi 90 "
-                "giorni' basta per l'uso normale — usa 'Storico completo' solo se ti "
-                "serve costruire la cronologia prezzi da zero."
-            ),
-        )
+    if st.session_state["scraper_job"] is not None:
+        _scraper_progress_fragment()
+    else:
+        last_message = st.session_state.pop("scraper_last_message", None)
+        if last_message:
+            kind, text = last_message
+            getattr(st, kind)(text)
 
-    with button_col:
-        st.write("")
-        activate = st.button("🔄 Activate Scraper", type="primary", use_container_width=True)
+        range_col, button_col = st.columns([2, 1])
 
-    if activate:
-        days_back = SCAN_RANGE_OPTIONS[range_label]
+        with range_col:
+            range_label = st.selectbox(
+                "Periodo da scansionare",
+                list(SCAN_RANGE_OPTIONS.keys()),
+                index=0,
+                help=(
+                    "Quanto indietro cercare i listini CAAT. Un periodo più corto vuol dire "
+                    "molte meno pagine da controllare, quindi molto più veloce. I report "
+                    "guardano al massimo 28 giorni lavorativi indietro, quindi 'Ultimi 90 "
+                    "giorni' basta per l'uso normale — usa 'Storico completo' solo se ti "
+                    "serve costruire la cronologia prezzi da zero."
+                ),
+            )
 
-        if days_back is None:
-            run_start_date = cfg.scraper.start_date
-        else:
-            run_start_date = max(cfg.scraper.start_date, date.today() - timedelta(days=days_back))
+        with button_col:
+            st.write("")
+            activate = st.button("🔄 Activate Scraper", type="primary", use_container_width=True)
 
-        run_cfg = dataclasses.replace(cfg.scraper, start_date=run_start_date)
+        if activate:
+            days_back = SCAN_RANGE_OPTIONS[range_label]
 
-        try:
-            with st.spinner(f"Scraping in corso dal {run_start_date:%d/%m/%Y} — può richiedere qualche minuto..."):
-                scraper.run(run_cfg)
+            if days_back is None:
+                run_start_date = cfg.scraper.start_date
+            else:
+                run_start_date = max(cfg.scraper.start_date, date.today() - timedelta(days=days_back))
 
-                REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-                result = latest_report.build_latest_report(
-                    run_cfg.output_xlsx, str(REPORTS_DIR / "ultimo_listino.pdf")
-                )
+            run_cfg = dataclasses.replace(cfg.scraper, start_date=run_start_date)
 
-            st.session_state["scraper_report_pdf"] = result["output_pdf"]
-            st.session_state["scraper_report_meta"] = result
-        except Exception as e:
-            st.error(f"Errore durante lo scraping: {e}")
+            job = ScraperJob()
+            st.session_state["scraper_job"] = job
+
+            thread = threading.Thread(target=_run_scraper_job, args=(run_cfg, job), daemon=True)
+            thread.start()
+            st.rerun()
 
     if st.session_state.get("scraper_report_pdf"):
         meta = st.session_state["scraper_report_meta"]
