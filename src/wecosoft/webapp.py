@@ -8,7 +8,9 @@ Run with:
 
 from __future__ import annotations
 
+import dataclasses
 import io
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -25,6 +27,17 @@ DISCOUNT_HELP = (
     "Usa il segno per indicare sconto o maggiorazione, es. -20, 10, 15 "
     "genera tre colonne aggiuntive."
 )
+
+# Reports never look back further than 28 working days (~6 weeks), so
+# scanning years of history on every run is almost always wasted work.
+# These are calendar-day lookbacks; "Storico completo" keeps whatever
+# start_date is set in config.yaml (default: 2023-01-01).
+SCAN_RANGE_OPTIONS = {
+    "Ultimi 90 giorni (veloce)": 90,
+    "Ultimi 6 mesi": 182,
+    "Ultimo anno": 365,
+    "Storico completo (lento)": None,
+}
 
 
 def _load_cfg() -> Config:
@@ -131,14 +144,43 @@ def main():
     st.subheader("1. Scraper")
     st.write("Raccoglie gli ultimi listini CAAT e genera un report PDF con i prezzi più recenti.")
 
-    if st.button("🔄 Activate Scraper", type="primary"):
+    range_col, button_col = st.columns([2, 1])
+
+    with range_col:
+        range_label = st.selectbox(
+            "Periodo da scansionare",
+            list(SCAN_RANGE_OPTIONS.keys()),
+            index=0,
+            help=(
+                "Quanto indietro cercare i listini CAAT. Un periodo più corto vuol dire "
+                "molte meno pagine da controllare, quindi molto più veloce. I report "
+                "guardano al massimo 28 giorni lavorativi indietro, quindi 'Ultimi 90 "
+                "giorni' basta per l'uso normale — usa 'Storico completo' solo se ti "
+                "serve costruire la cronologia prezzi da zero."
+            ),
+        )
+
+    with button_col:
+        st.write("")
+        activate = st.button("🔄 Activate Scraper", type="primary", use_container_width=True)
+
+    if activate:
+        days_back = SCAN_RANGE_OPTIONS[range_label]
+
+        if days_back is None:
+            run_start_date = cfg.scraper.start_date
+        else:
+            run_start_date = max(cfg.scraper.start_date, date.today() - timedelta(days=days_back))
+
+        run_cfg = dataclasses.replace(cfg.scraper, start_date=run_start_date)
+
         try:
-            with st.spinner("Scraping in corso — può richiedere qualche minuto..."):
-                scraper.run(cfg.scraper)
+            with st.spinner(f"Scraping in corso dal {run_start_date:%d/%m/%Y} — può richiedere qualche minuto..."):
+                scraper.run(run_cfg)
 
                 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
                 result = latest_report.build_latest_report(
-                    cfg.scraper.output_xlsx, str(REPORTS_DIR / "ultimo_listino.pdf")
+                    run_cfg.output_xlsx, str(REPORTS_DIR / "ultimo_listino.pdf")
                 )
 
             st.session_state["scraper_report_pdf"] = result["output_pdf"]
