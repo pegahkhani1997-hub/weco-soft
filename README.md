@@ -2,7 +2,43 @@
 
 CAAT mercuriali scraper, taxonomy-based pricing, and DDT/invoice PDF
 generation for food-rescue distribution — ported from a Colab notebook into
-a config-driven CLI.
+a config-driven CLI, plus a simple two-button web app for day-to-day use.
+
+## Web app
+
+The easiest way to use this day-to-day. Two buttons:
+
+- **Activate Scraper** — downloads the latest CAAT listini and gives you a
+  PDF report of the most recent prices to download. No taxonomy needed.
+- **Upload Taxonomy** — upload your taxonomy CSV, then **Filter / Tweak
+  Output** opens a settings window to customize the exported price-list
+  PDF before generating it:
+  - **Time frame**: 1/2/3 weeks or 1 month, where each "week" is 7 working
+    days (Mon-Fri), 2 weeks is 14, 3 weeks is 21, and 1 month is 28 —
+    counted backward from yesterday (today is always excluded).
+  - **Price statistic**: minimum, maximum, average, or mode (most
+    frequent) price across the window's listini for each product.
+  - **Discounted price columns**: type one or more percentages (e.g.
+    `-20, 10, 15`) to add that many extra columns, each showing the
+    chosen price statistic adjusted by that percentage.
+
+Run it with:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+streamlit run app.py
+```
+
+Then open the URL Streamlit prints (defaults to http://localhost:8501).
+Uploaded taxonomy files and generated reports are written under
+`output/uploads/` and `output/reports/`.
+
+## CLI (scripting / automation)
+
+For unattended or scripted use, the same pipeline is available as a CLI
+driven by `config.yaml`.
 
 ## What it does
 
@@ -92,3 +128,6 @@ comments. Key sections:
 - The taxonomy CSV is the single most important tweak: it's what maps raw
   CAAT reference strings (e.g. `ARANCE - LANE LATE - 70-80 (6) - I - A
   PIU' STRATI - ITALIA`) onto your product catalogue.
+- The web app's "mode" price statistic rounds prices to the cent and picks
+  the most frequently occurring value in the window; if every value in
+  the window is unique (no repeats), it falls back to the median.
