@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# generated/runtime files
+config.yaml
+output/
+*.xlsx
+*.pdf
+!data/tassonomia.example.csv

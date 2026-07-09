@@ -1,0 +1,129 @@
+# ============================================================
+# wecosoft config — copy this file to config.yaml and edit it.
+# config.yaml is the "tweakable file": every number, path and
+# piece of org info the pipeline uses lives here, not in code.
+# ============================================================
+
+# ------------------------------------------------------------
+# Stage 1: scraper (CAAT mercuriali PDFs -> price history Excel)
+# ------------------------------------------------------------
+scraper:
+  base_url: "https://caat.it/il-mercuriale-dei-prezzi/"
+  # Date to start scanning from (YYYY-MM-DD). CAAT publishes PDFs from 2023.
+  start_date: "2023-01-01"
+  # Leave empty/null to scan up to today.
+  end_date: null
+  out_dir: "./output/caat_mercuriali"
+  pdf_subdir: "pdf"
+  output_filename: "CAAT_tutti_mercuriali_PREV_COMPLETO.xlsx"
+  max_workers_check: 6
+  max_workers_download: 6
+  # Optional sanity checks: known reference + date + expected price.
+  # If any fail, the run still completes but prints a warning telling
+  # you to check the "Validazioni" sheet before trusting the output.
+  known_validations: []
+  #   - data: "2026-04-27"
+  #     referenza: "ARANCE - LANE LATE - 70-80 (6) - I - A PIU' STRATI - ITALIA"
+  #     prezzo_atteso: 1.30
+
+# ------------------------------------------------------------
+# Stage 2: taxonomy + pricing (maps CAAT references to your
+# product taxonomy and computes the sellable price list)
+# ------------------------------------------------------------
+pricing:
+  input_xlsx: "./output/caat_mercuriali/CAAT_tutti_mercuriali_PREV_COMPLETO.xlsx"
+  taxonomy_csv: "./data/tassonomia.csv"
+  output_xlsx: "./output/caat_mercuriali/CAAT_tutti_mercuriali_PREV_COMPLETO_TASSONOMIA.xlsx"
+  # How many of the most recent mercuriali to use when computing the
+  # "current" price for each product.
+  last_n_listini: 7
+  # Margins/discounts applied on top of the base (minimum) market price.
+  margine_ristorante: 0.15          # +15%, shown in "Tassonomia_Eco_pricing"
+  sconto_senza_selezione_qualita: 0.20   # -20%, "listino da usare" column B
+  margine_con_selezione_qualita: 0.10    # +10%, "listino da usare" column C
+  # If true, taxonomy rows with no matching CAAT reference are still
+  # listed (with blank prices) instead of being dropped.
+  include_taxonomy_rows_without_mercuriale_match: true
+
+# ------------------------------------------------------------
+# Stage 3: export the "listino da usare" sheet as its own file
+# (this is what stages 4/5 read as their price list)
+# ------------------------------------------------------------
+extract_listino:
+  input_xlsx: "./output/caat_mercuriali/CAAT_tutti_mercuriali_PREV_COMPLETO_TASSONOMIA.xlsx"
+  output_xlsx: "./output/caat_mercuriali/LISTINO_DA_USARE.xlsx"
+
+# ------------------------------------------------------------
+# Product-name matching, shared by the taxonomy stage and both
+# DDT generators. Fuzzy match kicks in when there's no exact match.
+# ------------------------------------------------------------
+matching:
+  soglia_match: 75   # 0-100, rapidfuzz WRatio threshold
+  # Manual overrides for common plurals/spelling variants that don't
+  # normalize cleanly (left side: as it appears on a DDT/Ozanam sheet,
+  # right side: the referenza in the price list).
+  manual_aliases:
+    patate: patata
+    patata: patata
+    pomodori: pomodoro
+    pomodoro: pomodoro
+    cicoria: cicoria
+    sedano: sedano
+    melanzane: melanzana
+    melanzana: melanzana
+    carote: carota
+    carota: carota
+    zucchine: zucchina
+    zucchina: zucchina
+    piselli: pisello
+    pisello: pisello
+    cipolla: cipolla
+    cipolle: cipolla
+    cipollotto: cipollotto
+    cavolfiore: cavolfiore
+    asparago: asparago
+    asparagi: asparago
+    avocado: avocado
+    peperoni: peperone
+    peperone: peperone
+    funghi: fungo coltivato
+    fungo: fungo coltivato
+    taccole: fagiolino Piatti verdi
+    "pera william": pera William
+    "pera max red bartlett": pera Max Red Bartlett
+    mango: mango
+    zucca: zucca
+    ananas: ananas
+    cetriolo: cetriolo
+    basilico: basilico
+    salvia: salvia
+    rosmarino: rosmarino
+
+# ------------------------------------------------------------
+# Sender info + boilerplate text printed on every generated DDT PDF.
+# ------------------------------------------------------------
+org:
+  mittente_nome: "Eco dalle Città APS"
+  mittente_indirizzo: "Via Maria Vittoria, 2 10123 Torino(TO)"
+  mittente_piva: "P. IVA: 10255560012"
+  causale: "Cessione gratuita ai sensi della L. n. 166 del 19/08/2016"
+  footer_text: "Generato con BringTheFood"
+
+# ------------------------------------------------------------
+# Stage 4: DDT generation from a generic PDF template
+# ------------------------------------------------------------
+ddt:
+  listino_xlsx: "./output/caat_mercuriali/LISTINO_DA_USARE.xlsx"
+  sheet_listino: "listino da usare"
+  out_dir: "./output/ddt_con_prezzi"
+  # normale | basso | alto -> which listino column to price with by default
+  # (can still be overridden per run with --prezzo)
+  prezzo_default: "normale"
+
+# ------------------------------------------------------------
+# Stage 5: DDT/invoice generation from an Ozanam-format Excel
+# ------------------------------------------------------------
+ozanam:
+  listino_xlsx: "./output/caat_mercuriali/LISTINO_DA_USARE.xlsx"
+  sheet_listino: "listino da usare"
+  out_dir: "./output/ddt_con_prezzi"

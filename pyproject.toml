@@ -1,0 +1,27 @@
+[project]
+name = "wecosoft"
+version = "0.1.0"
+description = "CAAT mercuriali scraper, taxonomy pricing, and DDT/invoice PDF generation"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "pymupdf>=1.23",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "tqdm>=4.66",
+    "python-dateutil>=2.8",
+    "rapidfuzz>=3.0",
+    "reportlab>=4.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+wecosoft = "wecosoft.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

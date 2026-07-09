@@ -1,0 +1,9 @@
+macro_categoria,raggruppamento,prodotto,qualita,certificazione,alias
+frutta,agrumi,arancia,,[],[]
+frutta,agrumi,arancia,Lane Late,[],["arance"]
+frutta,pomacee,pera,,[],["pere"]
+frutta,pomacee,pera,William,[],[]
+frutta,pomacee,pera,Max Red Bartlett,[],[]
+ortaggi e verdure,cucurbitacee,zucchina,,[],["zucchine"]
+ortaggi e verdure,solanacee,pomodoro,,[],["pomodori"]
+prodotti secchi,frutta secca,pinolo,,[],["pinoli"]
