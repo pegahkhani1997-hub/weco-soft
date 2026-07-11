@@ -105,7 +105,9 @@ def _run_scraper_job(run_cfg, job: ScraperJob):
 
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         job.result = latest_report.build_latest_report(
-            run_cfg.output_xlsx, str(REPORTS_DIR / "ultimo_listino.pdf")
+            run_cfg.output_xlsx,
+            str(REPORTS_DIR / "ultimo_listino.pdf"),
+            output_csv=str(REPORTS_DIR / "ultimo_listino.csv"),
         )
         job.status = "done"
     except scraper.ScraperCancelled:
@@ -206,6 +208,7 @@ def _tweak_settings_dialog(cfg: Config):
                     stat_key=stat_key,
                     discount_pcts=discounts,
                     output_pdf=str(REPORTS_DIR / "listino_personalizzato.pdf"),
+                    output_csv=str(REPORTS_DIR / "listino_personalizzato.csv"),
                 )
         except Exception as e:
             st.error(f"Errore nella generazione del report: {e}")
@@ -278,13 +281,28 @@ def main():
         meta = st.session_state["scraper_report_meta"]
         st.success(f"Report generato — listino del {meta['data_listino']}, {meta['n_referenze']} referenze.")
 
-        with open(st.session_state["scraper_report_pdf"], "rb") as f:
-            st.download_button(
-                "⬇️ Scarica report PDF",
-                f.read(),
-                file_name="ultimo_listino_caat.pdf",
-                mime="application/pdf",
-            )
+        dl_col1, dl_col2 = st.columns(2)
+
+        with dl_col1:
+            with open(st.session_state["scraper_report_pdf"], "rb") as f:
+                st.download_button(
+                    "⬇️ Scarica PDF",
+                    f.read(),
+                    file_name="ultimo_listino_caat.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+        with dl_col2:
+            if meta.get("output_csv"):
+                with open(meta["output_csv"], "rb") as f:
+                    st.download_button(
+                        "⬇️ Scarica CSV",
+                        f.read(),
+                        file_name="ultimo_listino_caat.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
 
     st.divider()
     st.subheader("2. Tassonomia e listino personalizzato")
@@ -315,10 +333,25 @@ def main():
             f"periodo {meta['finestra_da']} → {meta['finestra_a']}."
         )
 
-        with open(st.session_state["tweak_report_pdf"], "rb") as f:
-            st.download_button(
-                "⬇️ Scarica listino personalizzato PDF",
-                f.read(),
-                file_name="listino_personalizzato.pdf",
-                mime="application/pdf",
-            )
+        dl_col1, dl_col2 = st.columns(2)
+
+        with dl_col1:
+            with open(st.session_state["tweak_report_pdf"], "rb") as f:
+                st.download_button(
+                    "⬇️ Scarica PDF",
+                    f.read(),
+                    file_name="listino_personalizzato.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+        with dl_col2:
+            if meta.get("output_csv"):
+                with open(meta["output_csv"], "rb") as f:
+                    st.download_button(
+                        "⬇️ Scarica CSV",
+                        f.read(),
+                        file_name="listino_personalizzato.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )

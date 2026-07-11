@@ -157,6 +157,7 @@ def build_tweak_report(
     stat_key: str,
     discount_pcts: list[float],
     output_pdf: str,
+    output_csv: str | None = None,
 ) -> dict:
     if time_frame_key not in TIME_FRAME_DAYS:
         raise ValueError(f"Periodo sconosciuto: {time_frame_key}")
@@ -257,8 +258,15 @@ def build_tweak_report(
         landscape_page=len(discount_cols) >= 2,
     )
 
+    if output_csv is not None:
+        csv_df = report[["Nome referenza ECO", "macro_categoria", price_col] + discount_cols].rename(
+            columns={"Nome referenza ECO": "referenza", "macro_categoria": "macro"}
+        )
+        csv_df.to_csv(output_csv, index=False)
+
     return {
         "output_pdf": output_pdf,
+        "output_csv": output_csv,
         "n_referenze": int(len(report)),
         "finestra_da": window_dates[0].isoformat(),
         "finestra_a": window_dates[-1].isoformat(),
