@@ -49,6 +49,7 @@ DISCOUNT_HELP = (
 # These are calendar-day lookbacks; "Storico completo" keeps whatever
 # start_date is set in config.yaml (default: 2023-01-01).
 SCAN_RANGE_OPTIONS = {
+    "Ultime 2 settimane (più veloce)": 14,
     "Ultimi 90 giorni (veloce)": 90,
     "Ultimi 6 mesi": 182,
     "Ultimo anno": 365,
@@ -388,16 +389,20 @@ def main():
         range_col, button_col = st.columns([2, 1])
 
         with range_col:
+            range_options = list(SCAN_RANGE_OPTIONS.keys())
+            default_range = "Ultimi 90 giorni (veloce)"
+
             range_label = st.selectbox(
                 "Periodo da scansionare",
-                list(SCAN_RANGE_OPTIONS.keys()),
-                index=0,
+                range_options,
+                index=range_options.index(default_range),
                 help=(
                     "Quanto indietro cercare i listini CAAT. Un periodo più corto vuol dire "
                     "molte meno pagine da controllare, quindi molto più veloce. I report "
-                    "guardano al massimo 28 giorni lavorativi indietro, quindi 'Ultimi 90 "
-                    "giorni' basta per l'uso normale — usa 'Storico completo' solo se ti "
-                    "serve costruire la cronologia prezzi da zero."
+                    "guardano al massimo 28 giorni lavorativi indietro: 'Ultime 2 settimane' "
+                    "può bastare per un aggiornamento veloce, 'Ultimi 90 giorni' copre anche "
+                    "il periodo più lungo (1 mese) con margine — usa 'Storico completo' solo "
+                    "se ti serve costruire la cronologia prezzi da zero."
                 ),
             )
 
@@ -592,7 +597,25 @@ def main():
 
         for c in st.session_state["clients"]:
             with st.container(border=True):
-                info_col, button_col = st.columns([4, 1])
+                if st.session_state.get(f"confirm_delete_{c.id}"):
+                    st.warning(f"Eliminare il cliente **{c.nome}**? Non si può annullare.")
+                    col_yes, col_no = st.columns(2)
+
+                    if col_yes.button("Sì, elimina", key=f"confirm_yes_{c.id}", type="primary", width="stretch"):
+                        st.session_state["clients"] = [
+                            x for x in st.session_state["clients"] if x.id != c.id
+                        ]
+                        _save_clients()
+                        st.session_state.pop(f"confirm_delete_{c.id}", None)
+                        st.rerun()
+
+                    if col_no.button("Annulla", key=f"confirm_no_{c.id}", width="stretch"):
+                        st.session_state.pop(f"confirm_delete_{c.id}", None)
+                        st.rerun()
+
+                    continue
+
+                info_col, edit_col, delete_col = st.columns([4, 1, 1])
 
                 with info_col:
                     wishlist_text = ", ".join(c.wishlist) if c.wishlist else "—"
@@ -603,9 +626,14 @@ def main():
                         f"Consegna preferita: {c.data_consegna or '—'} {c.ora_consegna or ''}"
                     )
 
-                with button_col:
+                with edit_col:
                     if st.button("✏️ Modifica", key=f"edit_client_{c.id}", width="stretch"):
                         _client_dialog(existing=c)
+
+                with delete_col:
+                    if st.button("🗑️ Elimina", key=f"delete_client_{c.id}", width="stretch"):
+                        st.session_state[f"confirm_delete_{c.id}"] = True
+                        st.rerun()
 
         if st.button("➕ Nuovo cliente"):
             _client_dialog()
