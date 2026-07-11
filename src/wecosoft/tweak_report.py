@@ -227,11 +227,12 @@ def build_tweak_report(
         report[col_name] = (report[price_col] * (1 + pct / 100)).round(2)
         discount_cols.append(col_name)
 
-    headers = ["Referenza", "Macro", price_col] + discount_cols
+    headers = ["Referenza", price_col] + discount_cols
     rows = []
 
     for _, r in report.iterrows():
-        row = [cell(r["Nome referenza ECO"]), r["macro_categoria"], f"{r[price_col]:.2f}"]
+        referenza_label = f"{r['Nome referenza ECO']} ({r['macro_categoria']})"
+        row = [cell(referenza_label), f"{r[price_col]:.2f}"]
         for c in discount_cols:
             row.append(f"{r[c]:.2f}")
         rows.append(row)
@@ -244,7 +245,7 @@ def build_tweak_report(
         f"Report generato il {now_str()}",
     ]
 
-    col_widths = [230, 70, 80] + [80] * len(discount_cols)
+    col_widths = [300, 80] + [80] * len(discount_cols)
 
     render_table_pdf(
         output_path=output_pdf,
