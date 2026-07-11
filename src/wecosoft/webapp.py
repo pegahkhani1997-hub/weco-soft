@@ -229,7 +229,22 @@ def _tweak_settings_dialog(cfg: Config):
         st.rerun()
 
 
-_PASTE_LINE_RE = re.compile(r"^(.*?\S)\s*[,;]\s*([\d]+(?:[.,]\d+)?)\s*$")
+_PASTE_LINE_RE = re.compile(r"^(.*?\S)\s*[,;]\s*([^,;]+)\s*$")
+
+
+def _parse_pasted_quantity(raw: str) -> float | None:
+    """Accepts '30', '10,1', '71,6 Kg', '3 KG', etc. and returns kg as a float."""
+    s = re.sub(r"(?i)kg\.?", "", str(raw)).strip()
+    s = s.replace(",", ".")
+    s = re.sub(r"[^0-9.\-]", "", s)
+
+    if not s:
+        return None
+
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 
 def _parse_pasted_inventory(text: str) -> list[dict]:
@@ -238,6 +253,8 @@ def _parse_pasted_inventory(text: str) -> list[dict]:
     Excel/Sheets/Numbers) into inventory rows. Columns are normally
     tab-separated (the standard clipboard format for a copied cell range);
     falls back to comma/semicolon-separated for lines typed by hand.
+    Quantities may include a "kg" unit and/or a comma decimal (e.g.
+    "10,1 Kg") — both are stripped/normalized automatically.
     """
     rows = []
 
@@ -257,14 +274,9 @@ def _parse_pasted_inventory(text: str) -> list[dict]:
                 continue
             descrizione, qty_str = m.group(1).strip(), m.group(2)
 
-        qty_str = qty_str.replace(",", ".")
+        qty = _parse_pasted_quantity(qty_str)
 
-        try:
-            qty = float(qty_str)
-        except ValueError:
-            continue
-
-        if descrizione and qty > 0:
+        if descrizione and qty is not None and qty > 0:
             rows.append({"descrizione": descrizione, "quantita_kg": qty})
 
     return rows
