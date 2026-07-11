@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import re
 import threading
 from datetime import date, datetime
 from datetime import time as dtime
@@ -225,6 +226,47 @@ def _tweak_settings_dialog(cfg: Config):
         st.session_state["tweak_report_pdf"] = result["output_pdf"]
         st.session_state["tweak_report_meta"] = result
         st.rerun()
+
+
+_PASTE_LINE_RE = re.compile(r"^(.*?\S)\s*[,;]\s*([\d]+(?:[.,]\d+)?)\s*$")
+
+
+def _parse_pasted_inventory(text: str) -> list[dict]:
+    """
+    Parses lines pasted from a spreadsheet (e.g. two columns copied from
+    Excel/Sheets/Numbers) into inventory rows. Columns are normally
+    tab-separated (the standard clipboard format for a copied cell range);
+    falls back to comma/semicolon-separated for lines typed by hand.
+    """
+    rows = []
+
+    for line in text.splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        if "\t" in line:
+            parts = line.split("\t")
+            descrizione = parts[0].strip()
+            qty_str = parts[1].strip() if len(parts) > 1 else ""
+        else:
+            m = _PASTE_LINE_RE.match(line)
+            if not m:
+                continue
+            descrizione, qty_str = m.group(1).strip(), m.group(2)
+
+        qty_str = qty_str.replace(",", ".")
+
+        try:
+            qty = float(qty_str)
+        except ValueError:
+            continue
+
+        if descrizione and qty > 0:
+            rows.append({"descrizione": descrizione, "quantita_kg": qty})
+
+    return rows
 
 
 def _parse_date_or_today(s: str) -> date:
@@ -474,6 +516,29 @@ def main():
 
         st.write("**Inventario della settimana**")
         st.caption("Inserisci i prodotti disponibili e la quantità in kg. Righe vuote vengono ignorate.")
+
+        with st.expander("📋 Incolla da foglio di calcolo (Excel / Sheets / Numbers)"):
+            st.caption(
+                "Copia due colonne (prodotto e quantità in kg) dal tuo foglio di calcolo e "
+                "incollale qui sotto, una riga per prodotto. Sostituisce le righe della tabella "
+                "qui sotto — più affidabile che incollare più righe direttamente nella tabella, "
+                "che su alcuni browser non le importa tutte."
+            )
+            paste_text = st.text_area(
+                "Incolla qui", height=150, key="inventory_paste_box", label_visibility="collapsed"
+            )
+
+            if st.button("Importa nella tabella"):
+                parsed_rows = _parse_pasted_inventory(paste_text)
+
+                if not parsed_rows:
+                    st.warning("Non ho trovato righe valide da importare (prodotto + quantità).")
+                else:
+                    st.session_state["inventory_rows"] = parsed_rows
+                    store.save_json(str(INVENTORY_DRAFT_PATH), parsed_rows)
+                    st.session_state.pop("inventory_editor", None)
+                    st.success(f"{len(parsed_rows)} righe importate.")
+                    st.rerun()
 
         inventory_df = pd.DataFrame(st.session_state["inventory_rows"])
         if "descrizione" not in inventory_df.columns:
