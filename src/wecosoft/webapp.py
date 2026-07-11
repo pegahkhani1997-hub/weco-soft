@@ -247,14 +247,23 @@ def _parse_pasted_quantity(raw: str) -> float | None:
         return None
 
 
+INVENTORY_COLUMNS = ["descrizione", "ricevuto_kg", "recuperato_1a_kg", "recuperato_2a_kg", "scartato_kg", "note"]
+
+_HEADER_OR_TOTAL_WORDS = ("prodotto", "totale", "total")
+
+
 def _parse_pasted_inventory(text: str) -> list[dict]:
     """
-    Parses lines pasted from a spreadsheet (e.g. two columns copied from
-    Excel/Sheets/Numbers) into inventory rows. Columns are normally
-    tab-separated (the standard clipboard format for a copied cell range);
-    falls back to comma/semicolon-separated for lines typed by hand.
-    Quantities may include a "kg" unit and/or a comma decimal (e.g.
-    "10,1 Kg") — both are stripped/normalized automatically.
+    Parses lines pasted from the inventory tracking sheet: Prodotto,
+    Ricevuto, Recuperato 1a, Recuperato 2a, Scartato, Note — tab-separated,
+    as copied straight from Excel/Sheets/Numbers. Header rows and a
+    trailing "TOTALE" row are skipped automatically. Trailing columns may
+    be omitted (pasting just Prodotto + Ricevuto still works). "—", blank
+    cells, and "kg"/comma-decimal quantities (e.g. "10,1 Kg") are all
+    handled.
+
+    Falls back to a simple "product, quantity" pair (comma/semicolon
+    separated) for single lines typed by hand rather than pasted.
     """
     rows = []
 
@@ -265,35 +274,71 @@ def _parse_pasted_inventory(text: str) -> list[dict]:
             continue
 
         if "\t" in line:
-            parts = line.split("\t")
-            descrizione = parts[0].strip()
-            qty_str = parts[1].strip() if len(parts) > 1 else ""
+            parts = [p.strip() for p in line.split("\t")]
+            descrizione = parts[0]
+
+            if not descrizione or descrizione.lower() in _HEADER_OR_TOTAL_WORDS:
+                continue
+
+            def col(i):
+                return parts[i] if len(parts) > i else ""
+
+            row = {
+                "descrizione": descrizione,
+                "ricevuto_kg": _parse_pasted_quantity(col(1)),
+                "recuperato_1a_kg": _parse_pasted_quantity(col(2)),
+                "recuperato_2a_kg": _parse_pasted_quantity(col(3)),
+                "scartato_kg": _parse_pasted_quantity(col(4)),
+                "note": col(5),
+            }
         else:
             m = _PASTE_LINE_RE.match(line)
+
             if not m:
                 continue
-            descrizione, qty_str = m.group(1).strip(), m.group(2)
 
-        qty = _parse_pasted_quantity(qty_str)
+            descrizione = m.group(1).strip()
 
-        if descrizione and qty is not None and qty > 0:
-            rows.append({"descrizione": descrizione, "quantita_kg": qty})
+            if descrizione.lower() in _HEADER_OR_TOTAL_WORDS:
+                continue
+
+            row = {
+                "descrizione": descrizione,
+                "ricevuto_kg": _parse_pasted_quantity(m.group(2)),
+                "recuperato_1a_kg": None,
+                "recuperato_2a_kg": None,
+                "scartato_kg": None,
+                "note": "",
+            }
+
+        if row["ricevuto_kg"] is None and row["recuperato_1a_kg"] is None and row["recuperato_2a_kg"] is None:
+            continue
+
+        rows.append(row)
 
     return rows
 
 
-def _parse_date_or_today(s: str) -> date:
-    try:
-        return datetime.strptime(s, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        return date.today()
+def _next_weekdays(n: int, start: date | None = None) -> list[date]:
+    """The next n weekdays (Mon-Fri), starting today (today included if
+    it's itself a weekday)."""
+    start = start or date.today()
+    days: list[date] = []
+    d = start
+
+    while len(days) < n:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=1)
+
+    return days
 
 
-def _parse_time_or_default(s: str) -> dtime:
+def _parse_time_or_default(s: str, default: dtime = dtime(9, 0)) -> dtime:
     try:
         return datetime.strptime(s, "%H:%M").time()
     except (TypeError, ValueError):
-        return dtime(9, 0)
+        return default
 
 
 def _load_priced_referenze() -> list[str]:
@@ -319,18 +364,33 @@ def _client_dialog(existing: inventory.Client | None = None):
     wishlist_default = [w for w in (existing.wishlist if existing else []) if w in referenze_options]
     wishlist = st.multiselect("Wishlist (prodotti della tassonomia)", referenze_options, default=wishlist_default)
 
-    col_d, col_t = st.columns(2)
+    weekday_options = _next_weekdays(15)
+    weekday_labels = [inventory.format_weekday_date(d.isoformat()) for d in weekday_options]
 
-    with col_d:
-        data_consegna = st.date_input(
-            "Data di consegna preferita",
-            value=_parse_date_or_today(existing.data_consegna if existing else ""),
+    existing_date = None
+    if existing and existing.data_consegna:
+        try:
+            existing_date = date.fromisoformat(existing.data_consegna)
+        except ValueError:
+            existing_date = None
+
+    default_date_index = weekday_options.index(existing_date) if existing_date in weekday_options else 0
+
+    data_label = st.selectbox("Data di consegna preferita (giorni feriali)", weekday_labels, index=default_date_index)
+    data_consegna_iso = weekday_options[weekday_labels.index(data_label)].isoformat()
+
+    col_t1, col_t2 = st.columns(2)
+
+    with col_t1:
+        ora_inizio = st.time_input(
+            "Ora inizio consegna",
+            value=_parse_time_or_default(existing.ora_inizio if existing else "", default=dtime(9, 0)),
         )
 
-    with col_t:
-        ora_consegna = st.time_input(
-            "Ora di consegna preferita",
-            value=_parse_time_or_default(existing.ora_consegna if existing else ""),
+    with col_t2:
+        ora_fine = st.time_input(
+            "Ora fine consegna",
+            value=_parse_time_or_default(existing.ora_fine if existing else "", default=dtime(11, 0)),
         )
 
     col_save, col_cancel = st.columns(2)
@@ -345,6 +405,10 @@ def _client_dialog(existing: inventory.Client | None = None):
             st.error("Il nome del ristorante è obbligatorio.")
             return
 
+        if ora_fine <= ora_inizio:
+            st.error("L'ora di fine consegna deve essere successiva all'ora di inizio.")
+            return
+
         clients = st.session_state["clients"]
 
         if existing:
@@ -356,8 +420,9 @@ def _client_dialog(existing: inventory.Client | None = None):
                         indirizzo=indirizzo.strip(),
                         telefono=telefono.strip(),
                         wishlist=wishlist,
-                        data_consegna=data_consegna.isoformat(),
-                        ora_consegna=ora_consegna.strftime("%H:%M"),
+                        data_consegna=data_consegna_iso,
+                        ora_inizio=ora_inizio.strftime("%H:%M"),
+                        ora_fine=ora_fine.strftime("%H:%M"),
                     )
                     break
         else:
@@ -367,8 +432,9 @@ def _client_dialog(existing: inventory.Client | None = None):
                     indirizzo=indirizzo.strip(),
                     telefono=telefono.strip(),
                     wishlist=wishlist,
-                    data_consegna=data_consegna.isoformat(),
-                    ora_consegna=ora_consegna.strftime("%H:%M"),
+                    data_consegna=data_consegna_iso,
+                    ora_inizio=ora_inizio.strftime("%H:%M"),
+                    ora_fine=ora_fine.strftime("%H:%M"),
                 )
             )
 
@@ -528,18 +594,33 @@ def main():
         if "inventory_rows" not in st.session_state:
             saved_rows = store.load_json(str(INVENTORY_DRAFT_PATH), None)
             st.session_state["inventory_rows"] = saved_rows or [
-                {"descrizione": "", "quantita_kg": None} for _ in range(DEFAULT_INVENTORY_ROWS)
+                {
+                    "descrizione": "",
+                    "ricevuto_kg": None,
+                    "recuperato_1a_kg": None,
+                    "recuperato_2a_kg": None,
+                    "scartato_kg": None,
+                    "note": "",
+                }
+                for _ in range(DEFAULT_INVENTORY_ROWS)
             ]
 
         st.write("**Inventario della settimana**")
-        st.caption("Inserisci i prodotti disponibili e la quantità in kg. Righe vuote vengono ignorate.")
+        st.caption(
+            "Inserisci i prodotti e i kg per ciascuna fase (ricevuto, recuperato 1ª/2ª "
+            "selezione, scartato). Il prezzo si applica alla quantità recuperata "
+            "(1ª + 2ª); se non compili le colonne di recupero si usa 'Ricevuto'. "
+            "Righe vuote vengono ignorate."
+        )
 
         with st.expander("📋 Incolla da foglio di calcolo (Excel / Sheets / Numbers)"):
             st.caption(
-                "Copia due colonne (prodotto e quantità in kg) dal tuo foglio di calcolo e "
-                "incollale qui sotto, una riga per prodotto. Sostituisce le righe della tabella "
-                "qui sotto — più affidabile che incollare più righe direttamente nella tabella, "
-                "che su alcuni browser non le importa tutte."
+                "Copia le colonne del tuo foglio (Prodotto, Ricevuto, Recuperato 1ª, "
+                "Recuperato 2ª, Scartato, Note — anche solo le prime due) e incollale "
+                "qui sotto. Righe di intestazione e la riga 'TOTALE' vengono ignorate "
+                "automaticamente. Sostituisce le righe della tabella qui sotto — più "
+                "affidabile che incollare più righe direttamente nella tabella, che su "
+                "alcuni browser non le importa tutte."
             )
             paste_text = st.text_area(
                 "Incolla qui", height=150, key="inventory_paste_box", label_visibility="collapsed"
@@ -549,7 +630,7 @@ def main():
                 parsed_rows = _parse_pasted_inventory(paste_text)
 
                 if not parsed_rows:
-                    st.warning("Non ho trovato righe valide da importare (prodotto + quantità).")
+                    st.warning("Non ho trovato righe valide da importare.")
                 else:
                     st.session_state["inventory_rows"] = parsed_rows
                     store.save_json(str(INVENTORY_DRAFT_PATH), parsed_rows)
@@ -558,19 +639,22 @@ def main():
                     st.rerun()
 
         inventory_df = pd.DataFrame(st.session_state["inventory_rows"])
-        if "descrizione" not in inventory_df.columns:
-            inventory_df["descrizione"] = ""
-        if "quantita_kg" not in inventory_df.columns:
-            inventory_df["quantita_kg"] = None
+        for col in INVENTORY_COLUMNS:
+            if col not in inventory_df.columns:
+                inventory_df[col] = "" if col in ("descrizione", "note") else None
 
         edited_inventory = st.data_editor(
-            inventory_df[["descrizione", "quantita_kg"]],
+            inventory_df[INVENTORY_COLUMNS],
             num_rows="dynamic",
             width="stretch",
             key="inventory_editor",
             column_config={
                 "descrizione": st.column_config.TextColumn("Prodotto"),
-                "quantita_kg": st.column_config.NumberColumn("Quantità (kg)", min_value=0.0, step=0.5),
+                "ricevuto_kg": st.column_config.NumberColumn("Ricevuto (kg)", min_value=0.0, step=0.5),
+                "recuperato_1a_kg": st.column_config.NumberColumn("Recuperato 1ª (kg)", min_value=0.0, step=0.5),
+                "recuperato_2a_kg": st.column_config.NumberColumn("Recuperato 2ª (kg)", min_value=0.0, step=0.5),
+                "scartato_kg": st.column_config.NumberColumn("Scartato (kg)", min_value=0.0, step=0.5),
+                "note": st.column_config.TextColumn("Note"),
             },
         )
 
@@ -595,7 +679,19 @@ def main():
             n_unmatched = int(preview["referenza_matched"].isna().sum())
 
             st.dataframe(
-                preview[["descrizione", "quantita_kg", "referenza_matched", "prezzo_unitario", "match_metodo"]],
+                preview[
+                    [
+                        "descrizione",
+                        "ricevuto_kg",
+                        "recuperato_1a_kg",
+                        "recuperato_2a_kg",
+                        "scartato_kg",
+                        "usable_kg",
+                        "referenza_matched",
+                        "prezzo_unitario",
+                        "match_metodo",
+                    ]
+                ],
                 width="stretch",
             )
 
@@ -631,11 +727,13 @@ def main():
 
                 with info_col:
                     wishlist_text = ", ".join(c.wishlist) if c.wishlist else "—"
+                    data_str = inventory.format_weekday_date(c.data_consegna) if c.data_consegna else "—"
+                    orario = f"{c.ora_inizio}–{c.ora_fine}" if c.ora_inizio and c.ora_fine else "—"
                     st.markdown(
                         f"**{c.nome}**  \n"
                         f"{c.indirizzo or '—'} · {c.telefono or '—'}  \n"
                         f"Wishlist: {wishlist_text}  \n"
-                        f"Consegna preferita: {c.data_consegna or '—'} {c.ora_consegna or ''}"
+                        f"Consegna preferita: {data_str}, {orario}"
                     )
 
                 with edit_col:

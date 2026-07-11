@@ -24,22 +24,34 @@ The easiest way to use this day-to-day. Two buttons:
 
 Once a priced listino has been generated, a third section appears:
 
-- **Inventario e allocazione clienti** — enter this week's available
-  products/quantities (a spreadsheet-style grid, ~15 rows by default,
-  add/remove as needed), which get matched against the priced listino
-  to attach a unit price to each. Create and save **client profiles**
-  (name, address, phone, a wishlist picked from the taxonomy, preferred
-  delivery date/time) — they persist across restarts. Select one or more
-  clients and click **Genera allocazione** to split the week's inventory
+- **Inventario e allocazione clienti** — enter this week's inventory
+  tracking sheet (a spreadsheet-style grid, ~15 rows by default,
+  add/remove as needed): Prodotto, Ricevuto, Recuperato 1ª, Recuperato
+  2ª, Scartato, Note (kg columns; only Prodotto + one quantity are
+  required). Pasting from Excel/Sheets/Numbers works via the "Incolla da
+  foglio di calcolo" box above the grid — more reliable than pasting
+  straight into the grid, which doesn't handle multi-row pastes
+  consistently across browsers. The quantity actually priced/allocated
+  per product is **Recuperato 1ª + Recuperato 2ª**, falling back to
+  **Ricevuto** if neither recovery column is filled in; Scartato is
+  tracked but never allocated.
+
+  Create and save **client profiles** (name, address, phone, a wishlist
+  picked from the taxonomy, a preferred delivery date restricted to
+  weekdays, and a delivery time range) — they persist across restarts
+  and can be edited or deleted at any time. Select one or more clients
+  and click **Genera allocazione** to split the week's usable inventory
   among them:
   - a product goes only to the clients who listed it in their wishlist,
     split evenly among them;
   - a product nobody listed is split evenly across every selected
     client.
 
-  The result is a plain-text summary per client (quantity + price for
-  each allocated product), shown in a copy-friendly text box and also
-  downloadable as `.txt`.
+  The result is a plain-text summary per client — delivery date/time,
+  then a `Prodotto | Prezzo/kg | Prezzo prodotto` table and a
+  `Totale | kg totali | prezzo totale` row, deliberately excluding
+  address/phone so it's ready to paste straight into a message to the
+  client. Shown in a copy-friendly text box and downloadable as `.txt`.
 
 Run it with:
 
