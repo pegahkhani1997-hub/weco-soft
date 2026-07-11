@@ -11,13 +11,15 @@ from __future__ import annotations
 import dataclasses
 import io
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime
+from datetime import time as dtime
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from wecosoft import latest_report, pricing, scraper, tweak_report
+from wecosoft import inventory, latest_report, pricing, scraper, store, tweak_report
 from wecosoft.config import Config, load_config
 
 PHASE_LABELS = {
@@ -28,6 +30,12 @@ PHASE_LABELS = {
 
 UPLOADS_DIR = Path("output/uploads")
 REPORTS_DIR = Path("output/reports")
+STATE_DIR = Path("output/state")
+CLIENTS_PATH = STATE_DIR / "clients.json"
+INVENTORY_DRAFT_PATH = STATE_DIR / "inventory_draft.json"
+PRICED_LISTINO_CSV = REPORTS_DIR / "listino_personalizzato.csv"
+
+DEFAULT_INVENTORY_ROWS = 15
 
 DISCOUNT_HELP = (
     "Percentuali da applicare al prezzo scelto, separate da virgola. "
@@ -180,8 +188,8 @@ def _tweak_settings_dialog(cfg: Config):
     discount_text = st.text_input("Colonne prezzo scontato (%, separate da virgola)", value="", help=DISCOUNT_HELP)
 
     col_ok, col_cancel = st.columns(2)
-    generate = col_ok.button("Genera report", type="primary", use_container_width=True)
-    cancel = col_cancel.button("Annulla", use_container_width=True)
+    generate = col_ok.button("Genera report", type="primary", width="stretch")
+    cancel = col_cancel.button("Annulla", width="stretch")
 
     if cancel:
         st.rerun()
@@ -216,6 +224,101 @@ def _tweak_settings_dialog(cfg: Config):
 
         st.session_state["tweak_report_pdf"] = result["output_pdf"]
         st.session_state["tweak_report_meta"] = result
+        st.rerun()
+
+
+def _parse_date_or_today(s: str) -> date:
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return date.today()
+
+
+def _parse_time_or_default(s: str) -> dtime:
+    try:
+        return datetime.strptime(s, "%H:%M").time()
+    except (TypeError, ValueError):
+        return dtime(9, 0)
+
+
+def _load_priced_referenze() -> list[str]:
+    if not PRICED_LISTINO_CSV.exists():
+        return []
+
+    df = pd.read_csv(PRICED_LISTINO_CSV)
+    return sorted(df["referenza"].astype(str).tolist())
+
+
+def _save_clients():
+    store.save_json(str(CLIENTS_PATH), inventory.clients_to_dicts(st.session_state["clients"]))
+
+
+@st.dialog("Profilo cliente")
+def _client_dialog(existing: inventory.Client | None = None):
+    referenze_options = _load_priced_referenze()
+
+    nome = st.text_input("Nome ristorante", value=existing.nome if existing else "")
+    indirizzo = st.text_input("Indirizzo", value=existing.indirizzo if existing else "")
+    telefono = st.text_input("Telefono", value=existing.telefono if existing else "")
+
+    wishlist_default = [w for w in (existing.wishlist if existing else []) if w in referenze_options]
+    wishlist = st.multiselect("Wishlist (prodotti della tassonomia)", referenze_options, default=wishlist_default)
+
+    col_d, col_t = st.columns(2)
+
+    with col_d:
+        data_consegna = st.date_input(
+            "Data di consegna preferita",
+            value=_parse_date_or_today(existing.data_consegna if existing else ""),
+        )
+
+    with col_t:
+        ora_consegna = st.time_input(
+            "Ora di consegna preferita",
+            value=_parse_time_or_default(existing.ora_consegna if existing else ""),
+        )
+
+    col_save, col_cancel = st.columns(2)
+    save = col_save.button("Salva", type="primary", width="stretch")
+    cancel = col_cancel.button("Annulla", width="stretch")
+
+    if cancel:
+        st.rerun()
+
+    if save:
+        if not nome.strip():
+            st.error("Il nome del ristorante è obbligatorio.")
+            return
+
+        clients = st.session_state["clients"]
+
+        if existing:
+            for i, c in enumerate(clients):
+                if c.id == existing.id:
+                    clients[i] = inventory.Client(
+                        id=existing.id,
+                        nome=nome.strip(),
+                        indirizzo=indirizzo.strip(),
+                        telefono=telefono.strip(),
+                        wishlist=wishlist,
+                        data_consegna=data_consegna.isoformat(),
+                        ora_consegna=ora_consegna.strftime("%H:%M"),
+                    )
+                    break
+        else:
+            clients.append(
+                inventory.Client.new(
+                    nome=nome.strip(),
+                    indirizzo=indirizzo.strip(),
+                    telefono=telefono.strip(),
+                    wishlist=wishlist,
+                    data_consegna=data_consegna.isoformat(),
+                    ora_consegna=ora_consegna.strftime("%H:%M"),
+                )
+            )
+
+        st.session_state["clients"] = clients
+        _save_clients()
         st.rerun()
 
 
@@ -258,7 +361,7 @@ def main():
 
         with button_col:
             st.write("")
-            activate = st.button("🔄 Activate Scraper", type="primary", use_container_width=True)
+            activate = st.button("🔄 Activate Scraper", type="primary", width="stretch")
 
         if activate:
             days_back = SCAN_RANGE_OPTIONS[range_label]
@@ -290,7 +393,7 @@ def main():
                     f.read(),
                     file_name="ultimo_listino_caat.pdf",
                     mime="application/pdf",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         with dl_col2:
@@ -301,7 +404,7 @@ def main():
                         f.read(),
                         file_name="ultimo_listino_caat.csv",
                         mime="text/csv",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
     st.divider()
@@ -342,7 +445,7 @@ def main():
                     f.read(),
                     file_name="listino_personalizzato.pdf",
                     mime="application/pdf",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         with dl_col2:
@@ -353,5 +456,136 @@ def main():
                         f.read(),
                         file_name="listino_personalizzato.csv",
                         mime="text/csv",
-                        use_container_width=True,
+                        width="stretch",
+                    )
+
+    if PRICED_LISTINO_CSV.exists():
+        st.divider()
+        st.subheader("3. Inventario e allocazione clienti")
+
+        if "clients" not in st.session_state:
+            st.session_state["clients"] = inventory.clients_from_dicts(store.load_json(str(CLIENTS_PATH), []))
+
+        if "inventory_rows" not in st.session_state:
+            saved_rows = store.load_json(str(INVENTORY_DRAFT_PATH), None)
+            st.session_state["inventory_rows"] = saved_rows or [
+                {"descrizione": "", "quantita_kg": None} for _ in range(DEFAULT_INVENTORY_ROWS)
+            ]
+
+        st.write("**Inventario della settimana**")
+        st.caption("Inserisci i prodotti disponibili e la quantità in kg. Righe vuote vengono ignorate.")
+
+        inventory_df = pd.DataFrame(st.session_state["inventory_rows"])
+        if "descrizione" not in inventory_df.columns:
+            inventory_df["descrizione"] = ""
+        if "quantita_kg" not in inventory_df.columns:
+            inventory_df["quantita_kg"] = None
+
+        edited_inventory = st.data_editor(
+            inventory_df[["descrizione", "quantita_kg"]],
+            num_rows="dynamic",
+            width="stretch",
+            key="inventory_editor",
+            column_config={
+                "descrizione": st.column_config.TextColumn("Prodotto"),
+                "quantita_kg": st.column_config.NumberColumn("Quantità (kg)", min_value=0.0, step=0.5),
+            },
+        )
+
+        if st.button("💾 Salva inventario e abbina prezzi"):
+            rows = edited_inventory.to_dict("records")
+            st.session_state["inventory_rows"] = rows
+            store.save_json(str(INVENTORY_DRAFT_PATH), rows)
+
+            try:
+                listino_df, price_col = inventory.load_priced_listino(str(PRICED_LISTINO_CSV))
+                matched = inventory.match_inventory(
+                    rows, listino_df, price_col, cfg.matching.manual_aliases, cfg.matching.soglia_match
+                )
+                st.session_state["inventory_matched"] = matched
+                st.session_state["inventory_price_col"] = price_col
+            except Exception as e:
+                st.error(f"Errore nell'abbinamento inventario: {e}")
+
+        if st.session_state.get("inventory_matched"):
+            matched = st.session_state["inventory_matched"]
+            preview = pd.DataFrame(matched)
+            n_unmatched = int(preview["referenza_matched"].isna().sum())
+
+            st.dataframe(
+                preview[["descrizione", "quantita_kg", "referenza_matched", "prezzo_unitario", "match_metodo"]],
+                width="stretch",
+            )
+
+            if n_unmatched:
+                st.warning(
+                    f"{n_unmatched} prodotto/i dell'inventario non sono stati riconosciuti nel listino "
+                    "e non verranno allocati. Controlla l'ortografia o aggiungi un alias in config.yaml."
+                )
+
+        st.write("**Clienti**")
+
+        for c in st.session_state["clients"]:
+            with st.container(border=True):
+                info_col, button_col = st.columns([4, 1])
+
+                with info_col:
+                    wishlist_text = ", ".join(c.wishlist) if c.wishlist else "—"
+                    st.markdown(
+                        f"**{c.nome}**  \n"
+                        f"{c.indirizzo or '—'} · {c.telefono or '—'}  \n"
+                        f"Wishlist: {wishlist_text}  \n"
+                        f"Consegna preferita: {c.data_consegna or '—'} {c.ora_consegna or ''}"
+                    )
+
+                with button_col:
+                    if st.button("✏️ Modifica", key=f"edit_client_{c.id}", width="stretch"):
+                        _client_dialog(existing=c)
+
+        if st.button("➕ Nuovo cliente"):
+            _client_dialog()
+
+        if st.session_state["clients"]:
+            st.write("**Alloca inventario ai clienti selezionati**")
+
+            client_labels = {c.id: c.nome for c in st.session_state["clients"]}
+            selected_ids = st.multiselect(
+                "Clienti da includere in questa allocazione",
+                options=list(client_labels.keys()),
+                format_func=lambda cid: client_labels[cid],
+            )
+
+            if st.button("📋 Genera allocazione", type="primary"):
+                if not st.session_state.get("inventory_matched"):
+                    st.error("Salva prima l'inventario con il pulsante sopra.")
+                elif not selected_ids:
+                    st.error("Seleziona almeno un cliente.")
+                else:
+                    selected_clients = [c for c in st.session_state["clients"] if c.id in selected_ids]
+                    allocations, unmatched = inventory.allocate(
+                        st.session_state["inventory_matched"], selected_clients
+                    )
+                    st.session_state["allocation_text"] = inventory.format_all_summaries(
+                        selected_clients, allocations
+                    )
+                    st.session_state["allocation_unmatched_count"] = len(unmatched)
+
+            if st.session_state.get("allocation_text"):
+                st.text_area(
+                    "Riepilogo allocazione — pronto da copiare, inviare o stampare",
+                    st.session_state["allocation_text"],
+                    height=320,
+                )
+
+                st.download_button(
+                    "⬇️ Scarica riepilogo (.txt)",
+                    st.session_state["allocation_text"],
+                    file_name="allocazione_clienti.txt",
+                    mime="text/plain",
+                )
+
+                if st.session_state.get("allocation_unmatched_count"):
+                    st.info(
+                        f"{st.session_state['allocation_unmatched_count']} prodotto/i dell'inventario non "
+                        "abbinati al listino non sono stati inclusi nell'allocazione."
                     )

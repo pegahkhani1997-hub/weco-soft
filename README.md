@@ -22,6 +22,25 @@ The easiest way to use this day-to-day. Two buttons:
     `-20, 10, 15`) to add that many extra columns, each showing the
     chosen price statistic adjusted by that percentage.
 
+Once a priced listino has been generated, a third section appears:
+
+- **Inventario e allocazione clienti** — enter this week's available
+  products/quantities (a spreadsheet-style grid, ~15 rows by default,
+  add/remove as needed), which get matched against the priced listino
+  to attach a unit price to each. Create and save **client profiles**
+  (name, address, phone, a wishlist picked from the taxonomy, preferred
+  delivery date/time) — they persist across restarts. Select one or more
+  clients and click **Genera allocazione** to split the week's inventory
+  among them:
+  - a product goes only to the clients who listed it in their wishlist,
+    split evenly among them;
+  - a product nobody listed is split evenly across every selected
+    client.
+
+  The result is a plain-text summary per client (quantity + price for
+  each allocated product), shown in a copy-friendly text box and also
+  downloadable as `.txt`.
+
 Run it with:
 
 ```bash
@@ -131,3 +150,6 @@ comments. Key sections:
 - The web app's "mode" price statistic rounds prices to the cent and picks
   the most frequently occurring value in the window; if every value in
   the window is unique (no repeats), it falls back to the median.
+- Client profiles and the current inventory draft are saved as JSON under
+  `output/state/` so they survive app restarts (no database needed for a
+  single-user tool like this).
