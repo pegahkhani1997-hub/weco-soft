@@ -12,3 +12,8 @@ output/
 *.xlsx
 *.pdf
 !data/tassonomia.example.csv
+
+# persian-shorts
+node_modules/
+persian-shorts/backend/.env
+persian-shorts/backend/data/
